@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { getWebviewContent } from './frontend/panelRenderer';
+import { getAIResponse } from './backend/aiService';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('AI VS Code Extension is now active!');
@@ -36,12 +37,15 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Handle messages from the frontend
         panel.webview.onDidReceiveMessage(
-            message => {
+            async message => {
                 switch (message.command) {
                     case 'log':
                         console.log('Message from panel:', message.text);
                         break;
-                    // Future commands can be added here
+                    case 'askAI':
+                        const response = await getAIResponse(message.prompt);
+                        panel.webview.postMessage({ command: 'aiResponse', text: response });
+                        break;
                 }
             },
             undefined,
