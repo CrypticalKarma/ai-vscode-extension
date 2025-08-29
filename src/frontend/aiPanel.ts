@@ -1,0 +1,1 @@
+export const createAiPanel = () => { /* TODO: AI webview panel */ };

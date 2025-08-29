@@ -1,0 +1,1 @@
+export const aiService = () => { /* TODO: AI integration */ };

@@ -1,0 +1,1 @@
+export interface AIRequest { prompt: string; }

@@ -1,0 +1,1 @@
+export const readFile = (path: string) => { /* TODO: file reading */ };

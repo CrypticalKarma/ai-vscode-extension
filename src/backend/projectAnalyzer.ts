@@ -1,0 +1,1 @@
+export const analyzeProject = () => { /* TODO: project analysis */ };
