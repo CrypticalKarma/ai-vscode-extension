@@ -14,20 +14,30 @@ export function activate(context: vscode.ExtensionContext) {
             { enableScripts: true, retainContextWhenHidden: true }
         );
 
+        // Set initial HTML content
         panel.webview.html = getWebviewContent(panel.webview, context.extensionUri);
 
         // Handle messages from frontend
         panel.webview.onDidReceiveMessage(async (message) => {
             switch (message.command) {
                 case 'askAI':
-                    // message.prompt = user query
-                    // message.content = optional user work for proofreading
+                    // Show AI thinking in panel
+                    panel.webview.postMessage({ command: 'showThinking', text: true });
+
                     const aiResult = await getAIResponse(message.prompt, message.content);
-                    panel.webview.postMessage({ command: 'aiResponse', text: aiResult.text, checklist: aiResult.checklist });
+
+                    // Send AI response and updated checklist back to panel
+                    panel.webview.postMessage({
+                        command: 'aiResponse',
+                        text: aiResult.text,
+                        checklist: aiResult.checklist
+                    });
+
+                    // Hide AI thinking
+                    panel.webview.postMessage({ command: 'showThinking', text: false });
                     break;
 
                 case 'updateChecklist':
-                    // AI-driven checklist updates from frontend manual changes
                     console.log('Checklist manually updated:', message.checklist);
                     break;
             }

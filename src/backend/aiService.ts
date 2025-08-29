@@ -1,73 +1,97 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
 import OpenAI from 'openai';
+import * as path from 'path';
+import * as fs from 'fs';
 
-interface ChecklistItem {
-    label: string;
-    done: boolean;
-    proofreadRequired?: boolean;
-}
-
-let projectChecklist: ChecklistItem[] = [
-    { label: 'Open AI Panel', done: false },
-    { label: 'Send first AI query', done: false, proofreadRequired: true },
-    { label: 'Receive AI response', done: false }
-];
-
-const CHECKLIST_FILE = '.vscode/aiChecklist.json';
-
-// Load checklist from project folder
-function loadChecklist(workspacePath: string) {
-    const filePath = path.join(workspacePath, CHECKLIST_FILE);
-    if (fs.existsSync(filePath)) {
-        const data = fs.readFileSync(filePath, 'utf8');
-        projectChecklist = JSON.parse(data);
-    }
-}
-
-// Save checklist to project folder
-function saveChecklist(workspacePath: string) {
-    const filePath = path.join(workspacePath, CHECKLIST_FILE);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(projectChecklist, null, 2));
-}
-
-// Initialize OpenAI client (replace process.env.OPENAI_API_KEY with your key)
-const client = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY || ''
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
 });
 
-export async function getAIResponse(userPrompt: string, userContent?: string): Promise<{ text: string; checklist: ChecklistItem[] }> {
-    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    if (workspacePath) loadChecklist(workspacePath);
+interface ChatMessage {
+  role: 'user' | 'ai';
+  content: string;
+  timestamp: number;
+}
 
-    // Auto-update checklist based on prompt
-    projectChecklist = projectChecklist.map(item => {
-        if (userPrompt.toLowerCase().includes(item.label.toLowerCase())) {
-            return { ...item, done: true };
-        }
-        return item;
-    });
+interface ChecklistItem {
+  text: string;
+  status: '✅' | '⚠️' | '⬜';
+}
 
-    let responseText = '';
+interface AIResponse {
+  text: string;
+  checklist: ChecklistItem[];
+}
 
-    if (!process.env.OPENAI_API_KEY) {
-        responseText = `[Placeholder AI response] You asked: ${userPrompt}`;
-        if (userContent) responseText += '\n\n[Proofreading] Looks good. Minor suggestions.';
-    } else {
-        // Make actual OpenAI call
-        const promptText = userContent ? `${userPrompt}\n\nPlease proofread the following:\n${userContent}` : userPrompt;
+const chatHistory: Record<string, ChatMessage[]> = {};
+const checklistStorage: Record<string, ChecklistItem[]> = {};
 
-        const completion = await client.chat.completions.create({
-            model: 'gpt-4o-mini',
-            messages: [{ role: 'user', content: promptText }],
-        });
+function getChecklistFilePath(): string | null {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return null;
+  return path.join(folders[0].uri.fsPath, '.vscode', 'aiChecklist.json');
+}
 
-        responseText = completion.choices[0]?.message?.content || '[No response]';
+export async function getAIResponse(prompt: string, userContent?: string): Promise<AIResponse> {
+  const workspaceKey = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'default';
+
+  if (!chatHistory[workspaceKey]) chatHistory[workspaceKey] = [];
+  if (!checklistStorage[workspaceKey]) checklistStorage[workspaceKey] = loadChecklist();
+
+  chatHistory[workspaceKey].push({ role: 'user', content: prompt, timestamp: Date.now() });
+
+  const combinedPrompt = userContent
+    ? `${prompt}\n\nPlease proofread the following content:\n${userContent}`
+    : prompt;
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4',
+    messages: [
+      { role: 'system', content: 'You are a helpful coding assistant tracking project checklist progress.' },
+      ...chatHistory[workspaceKey].map(m => ({ role: m.role, content: m.content }))
+    ]
+  });
+
+  const aiText = response.choices[0].message?.content || '';
+  chatHistory[workspaceKey].push({ role: 'ai', content: aiText, timestamp: Date.now() });
+
+  updateChecklistFromAI(aiText, workspaceKey);
+  saveChecklist(workspaceKey);
+
+  return { text: aiText, checklist: checklistStorage[workspaceKey] };
+}
+
+function loadChecklist(): ChecklistItem[] {
+  const filePath = getChecklistFilePath();
+  if (!filePath) return [];
+  try {
+    if (fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath, 'utf8');
+      return JSON.parse(data) as ChecklistItem[];
     }
+  } catch (err) {
+    console.error('Error loading checklist:', err);
+  }
+  return [];
+}
 
-    if (workspacePath) saveChecklist(workspacePath);
+function saveChecklist(workspaceKey: string) {
+  const filePath = getChecklistFilePath();
+  if (!filePath) return;
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(checklistStorage[workspaceKey], null, 2));
+  } catch (err) {
+    console.error('Error saving checklist:', err);
+  }
+}
 
-    return { text: responseText, checklist: projectChecklist };
+function updateChecklistFromAI(aiText: string, workspaceKey: string) {
+  const items = checklistStorage[workspaceKey];
+  items.forEach(item => {
+    if (aiText.toLowerCase().includes(item.text.toLowerCase())) {
+      item.status = '✅';
+    }
+  });
+  checklistStorage[workspaceKey] = items;
 }
