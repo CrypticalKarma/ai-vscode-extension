@@ -2,13 +2,18 @@ import * as vscode from 'vscode';
 import OpenAI from 'openai';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as dotenv from 'dotenv';
+
+// Load .env if present
+dotenv.config();
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Local chat history format
 interface ChatMessage {
-  role: 'user' | 'ai';
+  role: 'user' | 'assistant' | 'system'; // Matches OpenAI roles now
   content: string;
   timestamp: number;
 }
@@ -38,22 +43,36 @@ export async function getAIResponse(prompt: string, userContent?: string): Promi
   if (!chatHistory[workspaceKey]) chatHistory[workspaceKey] = [];
   if (!checklistStorage[workspaceKey]) checklistStorage[workspaceKey] = loadChecklist();
 
+  // Push user message into history
   chatHistory[workspaceKey].push({ role: 'user', content: prompt, timestamp: Date.now() });
 
   const combinedPrompt = userContent
     ? `${prompt}\n\nPlease proofread the following content:\n${userContent}`
     : prompt;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4',
-    messages: [
-      { role: 'system', content: 'You are a helpful coding assistant tracking project checklist progress.' },
-      ...chatHistory[workspaceKey].map(m => ({ role: m.role, content: m.content }))
-    ]
-  });
+  let aiText = '';
 
-  const aiText = response.choices[0].message?.content || '';
-  chatHistory[workspaceKey].push({ role: 'ai', content: aiText, timestamp: Date.now() });
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini', // faster + cheaper than plain gpt-4
+      messages: [
+        { role: 'system', content: 'You are a helpful coding assistant tracking project checklist progress.' },
+        ...chatHistory[workspaceKey].map(m => ({
+          role: m.role, // now strictly 'system' | 'user' | 'assistant'
+          content: m.content,
+        })),
+        { role: 'user', content: combinedPrompt },
+      ],
+    });
+
+    aiText = response.choices?.[0]?.message?.content || 'No response from AI';
+  } catch (err) {
+    console.error('Error fetching AI response:', err);
+    aiText = 'Error fetching AI response.';
+  }
+
+  // Push assistant reply to history
+  chatHistory[workspaceKey].push({ role: 'assistant', content: aiText, timestamp: Date.now() });
 
   updateChecklistFromAI(aiText, workspaceKey);
   saveChecklist(workspaceKey);
